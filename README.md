@@ -1,6 +1,6 @@
-# Chix
+# chix
 
-This package provides some methods that Chi lacks, such as binding and rendering.
+This package provides some methods that [go-chi/chi](https://github.com/go-chi/chi) lacks, such as binding and rendering.
 
 A lot of the code in this package comes from [Fiber](https://github.com/gofiber/fiber), the last synchronized version: [ed9595231c08a72f838a1c75389d9dc43665d1b2](https://github.com/gofiber/fiber/commit/ed9595231c08a72f838a1c75389d9dc43665d1b2).
 
@@ -8,7 +8,7 @@ A lot of the code in this package comes from [Fiber](https://github.com/gofiber/
 
 ### Custom Encoders and Decoders
 
-Chix supports custom JSON/XML encoders and decoders. Here's an example:
+Package chix supports custom JSON/XML encoders and decoders. Here's an example:
 
 ```go
 import (
