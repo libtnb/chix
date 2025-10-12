@@ -42,7 +42,6 @@ func Test_CookieBinder_Bind(t *testing.T) {
 
 func Benchmark_CookieBinder_Bind(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	binder := &cookieBinding{}
 
@@ -58,10 +57,8 @@ func Benchmark_CookieBinder_Bind(b *testing.B) {
 	req.AddCookie(&http.Cookie{Name: "age", Value: "42"})
 	req.AddCookie(&http.Cookie{Name: "posts", Value: "post1,post2,post3"})
 
-	b.ResetTimer()
-
 	var err error
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err = binder.Bind(req, &user, true)
 	}
 
@@ -72,4 +69,18 @@ func Benchmark_CookieBinder_Bind(b *testing.B) {
 	require.Contains(b, user.Posts, "post1")
 	require.Contains(b, user.Posts, "post2")
 	require.Contains(b, user.Posts, "post3")
+}
+
+func Test_CookieBinder_Bind_ParseError(t *testing.T) {
+	b := &cookieBinding{}
+	type User struct {
+		Age int `cookie:"age"`
+	}
+	var user User
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: "age", Value: "invalid"})
+
+	err := b.Bind(req, &user)
+	require.Error(t, err)
 }

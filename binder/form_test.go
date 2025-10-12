@@ -46,9 +46,22 @@ func Test_FormBinder_Bind(t *testing.T) {
 	require.Contains(t, user.Names, "doe")
 }
 
+func Test_FormBinder_Bind_ParseError(t *testing.T) {
+	b := &formBinding{}
+	type User struct {
+		Age int `form:"age"`
+	}
+	var user User
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("age=invalid"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	err := b.Bind(req, &user)
+	require.Error(t, err)
+}
+
 func Benchmark_FormBinder_Bind(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	binder := &formBinding{}
 
@@ -62,10 +75,8 @@ func Benchmark_FormBinder_Bind(b *testing.B) {
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("name=john&age=42&posts=post1,post2,post3"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	b.ResetTimer()
-
 	var err error
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err = binder.Bind(req, &user, true)
 	}
 
@@ -175,9 +186,41 @@ func Test_FormBinder_BindMultipart(t *testing.T) {
 	require.Equal(t, "avatar2", string(content))
 }
 
+func Test_FormBinder_BindMultipart_ValueError(t *testing.T) {
+	b := &formBinding{}
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	buf := &bytes.Buffer{}
+	mw := multipart.NewWriter(buf)
+	require.NoError(t, mw.WriteField("invalid[", "val"))
+	require.NoError(t, mw.Close())
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Body = io.NopCloser(buf)
+
+	err := b.BindMultipart(req, &struct{}{}, 32768<<10, true)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unmatched brackets")
+}
+
+func Test_FormBinder_BindMultipart_FileError(t *testing.T) {
+	b := &formBinding{}
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	buf := &bytes.Buffer{}
+	mw := multipart.NewWriter(buf)
+	writer, err := mw.CreateFormFile("invalid[", "file.txt")
+	require.NoError(t, err)
+	_, err = writer.Write([]byte("content"))
+	require.NoError(t, err)
+	require.NoError(t, mw.Close())
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Body = io.NopCloser(buf)
+
+	err = b.BindMultipart(req, &struct{}{}, 32768<<10, true)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unmatched brackets")
+}
+
 func Benchmark_FormBinder_BindMultipart(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	binder := &formBinding{}
 
@@ -201,10 +244,8 @@ func Benchmark_FormBinder_BindMultipart(b *testing.B) {
 	req := httptest.NewRequest(http.MethodPost, "/", buf)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
-	b.ResetTimer()
-
 	var err error
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err = binder.BindMultipart(req, &user, 32768<<10, true)
 	}
 

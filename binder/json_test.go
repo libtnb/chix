@@ -37,7 +37,6 @@ func Test_JSON_Binding_Bind(t *testing.T) {
 
 func Benchmark_JSON_Binding_Bind(b *testing.B) {
 	b.ReportAllocs()
-	b.ResetTimer()
 
 	binder := &jsonBinding{}
 
@@ -49,7 +48,7 @@ func Benchmark_JSON_Binding_Bind(b *testing.B) {
 
 	var user User
 	var err error
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		err = binder.Bind(json.NewDecoder(bytes.NewReader([]byte(`{"name":"john","age":42,"posts":["post1","post2","post3"]}`))), &user)
 	}
 

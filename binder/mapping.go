@@ -3,6 +3,7 @@ package binder
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"mime/multipart"
 	"reflect"
 	"strings"
@@ -22,7 +23,7 @@ type ParserConfig struct {
 // ParserType require two element, type and converter for register.
 // Use ParserType with BodyParser for parsing custom type in form data.
 type ParserType struct {
-	Customtype any
+	CustomType any
 	Converter  func(string) reflect.Value
 }
 
@@ -49,7 +50,7 @@ func decoderBuilder(parserConfig ParserConfig) any {
 		decoder.SetAliasTag(parserConfig.SetAliasTag)
 	}
 	for _, v := range parserConfig.ParserType {
-		decoder.RegisterConverter(reflect.ValueOf(v.Customtype).Interface(), v.Converter)
+		decoder.RegisterConverter(reflect.ValueOf(v.CustomType).Interface(), v.Converter)
 	}
 	decoder.ZeroEmpty(parserConfig.ZeroEmpty)
 	return decoder
@@ -105,16 +106,14 @@ func parseToMap(ptr any, data map[string][]string) error {
 	case reflect.Slice:
 		newMap, ok := ptr.(map[string][]string)
 		if !ok {
-			return ErrMapNotConvertable
+			return ErrMapNotConvertible
 		}
 
-		for k, v := range data {
-			newMap[k] = v
-		}
+		maps.Copy(newMap, data)
 	case reflect.String, reflect.Interface:
 		newMap, ok := ptr.(map[string]string)
 		if !ok {
-			return ErrMapNotConvertable
+			return ErrMapNotConvertible
 		}
 
 		for k, v := range data {
@@ -185,7 +184,7 @@ func fieldName(f reflect.StructField, aliasTag string) string {
 		name = strings.Split(name, ",")[0]
 	}
 
-	return utils.ToLower(name)
+	return strings.ToLower(name)
 }
 
 type fieldInfo struct {
@@ -250,7 +249,7 @@ func buildFieldInfo(t reflect.Type, aliasTag string) fieldInfo {
 
 func equalFieldType(out any, kind reflect.Kind, key, aliasTag string) bool {
 	typ := reflect.TypeOf(out).Elem()
-	key = utils.ToLower(key)
+	key = strings.ToLower(key)
 
 	if isStringKeyMap(typ) {
 		return true
@@ -336,9 +335,7 @@ func formatBindData[T, K any](aliasTag string, out any, data map[string][]T, key
 func assignBindData(aliasTag string, out any, data map[string][]string, key, value string, enableSplitting bool) { //nolint:revive // it's okay
 	if enableSplitting && strings.Contains(value, ",") && equalFieldType(out, reflect.Slice, key, aliasTag) {
 		values := strings.Split(value, ",")
-		for i := 0; i < len(values); i++ {
-			data[key] = append(data[key], values[i])
-		}
+		data[key] = append(data[key], values...)
 	} else {
 		data[key] = append(data[key], value)
 	}
