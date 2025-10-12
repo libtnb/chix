@@ -20,7 +20,7 @@ func (b *cookieBinding) Bind(r *http.Request, out any, enableSplitting ...bool) 
 		k := cookie.Name
 		v := cookie.Value
 
-		if err := formatBindData(out, data, k, v, enableSplitting[0], true); err != nil {
+		if err := formatBindData(b.Name(), out, data, k, v, enableSplitting[0], true); err != nil {
 			return err
 		}
 	}

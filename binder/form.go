@@ -23,7 +23,7 @@ func (b *formBinding) Bind(r *http.Request, out any, enableSplitting ...bool) er
 	}
 
 	for k, v := range r.PostForm {
-		if err := formatBindData(out, data, k, strings.Join(v, ","), enableSplitting[0], true); err != nil {
+		if err := formatBindData(b.Name(), out, data, k, strings.Join(v, ","), enableSplitting[0], true); err != nil {
 			return err
 		}
 	}
@@ -41,14 +41,14 @@ func (b *formBinding) BindMultipart(r *http.Request, out any, size int64, enable
 
 	data := make(map[string][]string)
 	for key, values := range r.MultipartForm.Value {
-		if err := formatBindData(out, data, key, values, enableSplitting[0], true); err != nil {
+		if err := formatBindData(b.Name(), out, data, key, values, enableSplitting[0], true); err != nil {
 			return err
 		}
 	}
 
 	files := make(map[string][]*multipart.FileHeader)
 	for key, values := range r.MultipartForm.File {
-		if err := formatBindData(out, files, key, values, enableSplitting[0], true); err != nil {
+		if err := formatBindData(b.Name(), out, files, key, values, enableSplitting[0], true); err != nil {
 			return err
 		}
 	}

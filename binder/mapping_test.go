@@ -199,7 +199,7 @@ func TestFormatBindData(t *testing.T) {
 
 		out := struct{}{}
 		data := make(map[string][]string)
-		err := formatBindData(out, data, "name", "John", false, false)
+		err := formatBindData(b.Name(), out, data, "name", "John", false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -213,7 +213,7 @@ func TestFormatBindData(t *testing.T) {
 
 		out := struct{}{}
 		data := make(map[string][]string)
-		err := formatBindData(out, data, "age", 30, false, false) // int is unsupported
+		err := formatBindData(b.Name(), out, data, "age", 30, false, false) // int is unsupported
 		if err == nil {
 			t.Fatal("expected an error, got nil")
 		}
@@ -224,7 +224,7 @@ func TestFormatBindData(t *testing.T) {
 
 		out := struct{}{}
 		data := make(map[string][]string)
-		err := formatBindData(out, data, "invalid[", "value", false, true) // malformed bracket notation
+		err := formatBindData(b.Name(), out, data, "invalid[", "value", false, true) // malformed bracket notation
 		if err == nil {
 			t.Fatal("expected an error, got nil")
 		}
@@ -239,7 +239,7 @@ func TestFormatBindData(t *testing.T) {
 			{Filename: "file1.txt"},
 			{Filename: "file2.txt"},
 		}
-		err := formatBindData(out, data, "files", files, false, false)
+		err := formatBindData(b.Name(), out, data, "files", files, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -253,7 +253,7 @@ func TestFormatBindData(t *testing.T) {
 
 		out := struct{}{}
 		data := map[string][]int{} // Incorrect type to force a casting error
-		err := formatBindData(out, data, "key", "value", false, false)
+		err := formatBindData(b.Name(), out, data, "key", "value", false, false)
 		require.Equal(t, "unsupported value type: string", err.Error())
 	})
 }
@@ -308,7 +308,7 @@ func Test_formatBindData_ErrorCases(t *testing.T) {
 
 		out := struct{}{}
 		data := make(map[string][]string)
-		err := formatBindData(out, data, "age", 30, false, false) // int is unsupported
+		err := formatBindData(b.Name(), out, data, "age", 30, false, false) // int is unsupported
 		require.Error(t, err)
 		require.EqualError(t, err, "unsupported value type: int")
 	})
@@ -318,7 +318,7 @@ func Test_formatBindData_ErrorCases(t *testing.T) {
 
 		out := struct{}{}
 		data := make(map[string][]string)
-		err := formatBindData(out, data, "map", map[string]string{"key": "value"}, false, false) // map is unsupported
+		err := formatBindData(b.Name(), out, data, "map", map[string]string{"key": "value"}, false, false) // map is unsupported
 		require.Error(t, err)
 		require.EqualError(t, err, "unsupported value type: map[string]string")
 	})
@@ -328,7 +328,7 @@ func Test_formatBindData_ErrorCases(t *testing.T) {
 
 		out := struct{}{}
 		data := make(map[string][]string)
-		err := formatBindData(out, data, "invalid[", "value", false, true) // malformed bracket notation
+		err := formatBindData(b.Name(), out, data, "invalid[", "value", false, true) // malformed bracket notation
 		require.Error(t, err)
 		require.EqualError(t, err, "unmatched brackets")
 	})
@@ -338,7 +338,7 @@ func Test_formatBindData_ErrorCases(t *testing.T) {
 
 		out := struct{}{}
 		data := make(map[string][]string)
-		err := formatBindData(out, data, "names", 123, false, false) // invalid type for []string
+		err := formatBindData(b.Name(), out, data, "names", 123, false, false) // invalid type for []string
 		require.Error(t, err)
 		require.EqualError(t, err, "unsupported value type: int")
 	})
