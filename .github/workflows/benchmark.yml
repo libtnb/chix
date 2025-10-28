@@ -15,8 +15,8 @@ jobs:
   benchmark:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "stable"
           cache: true
@@ -24,7 +24,7 @@ jobs:
         run: set -o pipefail; go test ./... -benchmem -run=^$ -bench . | tee output.txt
       # NOTE: Benchmarks could change with different CPU types
       - name: Get GitHub Runner System Information
-        uses: kenchan0130/actions-system-info@v1.3.1
+        uses: kenchan0130/actions-system-info@v1.4.0
         id: system-info
       - name: Get main branch SHA
         id: get-main-branch-sha
