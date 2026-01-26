@@ -34,7 +34,7 @@ jobs:
           echo "sha=$SHA" >> $GITHUB_OUTPUT
       - name: Get Benchmark Results from main branch
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ./cache
           key: ${{ steps.get-main-branch-sha.outputs.sha }}-${{ runner.os }}-${{ steps.system-info.outputs.cpu-model }}-benchmark
@@ -68,7 +68,7 @@ jobs:
           summary-always: true
           alert-threshold: "150%"
       - name: Update Benchmark Results cache
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         if: ${{ github.ref_name == 'main' }}
         with:
           path: ./cache
