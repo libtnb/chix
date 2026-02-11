@@ -5,39 +5,21 @@ on:
       - main
   pull_request:
 jobs:
-  ubuntu:
-    runs-on: ubuntu-latest
+  test:
+    strategy:
+      matrix:
+        go: [ "oldstable", "stable" ]
+        platform: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: 'stable'
           cache: true
+          go-version: ${{ matrix.go }}
+      - name: Install dependencies
+        run: go mod tidy
       - name: Run tests
-        run: go test -v -coverprofile="coverage.out" ./...
-  windows:
-    runs-on: windows-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: 'stable'
-          cache: true
-      - name: Run tests
-        run: go test -v -coverprofile="coverage.out" ./...
-  macos:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: 'stable'
-          cache: true
-      - name: Run tests
-        run: go test -v -coverprofile="coverage.out" ./...
+        run: go test -timeout 1h ./...
