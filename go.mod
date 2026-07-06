@@ -3,7 +3,7 @@ module github.com/libtnb/chix
 go 1.25.0
 
 require (
-	github.com/go-chi/chi/v5 v5.3.0
+	github.com/go-chi/chi/v5 v5.3.1
 	github.com/gofiber/schema v1.8.0
 	github.com/stretchr/testify v1.11.1
 )
