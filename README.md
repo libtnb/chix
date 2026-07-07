@@ -4,25 +4,38 @@ This package provides some methods that [go-chi/chi](https://github.com/go-chi/c
 
 A lot of the code in this package comes from [Fiber](https://github.com/gofiber/fiber), the last synchronized version: [ed9595231c08a72f838a1c75389d9dc43665d1b2](https://github.com/gofiber/fiber/commit/ed9595231c08a72f838a1c75389d9dc43665d1b2).
 
+## Install
+
+```bash
+go get github.com/libtnb/chix/v2
+```
+
+## Migrating from v1
+
+- `chix.JSONEncoder`/`JSONDecoder`/`XMLEncoder`/`XMLDecoder` are replaced by `chix.JSONMarshal`/`JSONUnmarshal`/`XMLMarshal`/`XMLUnmarshal`, which accept any implementation matching the standard `Marshal`/`Unmarshal` signatures (e.g. sonic, go-json).
+- Query/form/header binding no longer joins repeated keys with commas: `?a=1&a=2` now binds to `["1", "2"]` instead of `["1,2"]`, and values containing commas are no longer split unless splitting is enabled.
+- `Render.JSON`/`JSONP` no longer write a trailing newline.
+- `Render.Hijack` now returns `(net.Conn, *bufio.ReadWriter, error)` directly.
+- `Render.WithoutCookie` deletes the cookie with `Path=/` by default and accepts an optional path.
+- `Bind.Body` returns `chix.ErrUnsupportedMediaType` for unknown content types, and `Bind.URI` returns `chix.ErrNoRouteContext` instead of panicking when the request was not routed by chi.
+- `renderer.SSEventEncode` splits multi-line payloads into one `data:` field per line per the SSE spec, and `Data` may be nil.
+
 ## Guides
 
-### Custom Encoders and Decoders
+### Custom Marshal and Unmarshal
 
-Package chix supports custom JSON/XML encoders and decoders. Here's an example:
+Package chix supports custom JSON/XML marshal and unmarshal functions, so you can plug in any drop-in replacement of the standard library:
 
 ```go
 import (
-    "encoding/json"
-    "encoding/xml"
+    "github.com/bytedance/sonic"
 
-    "github.com/libtnb/chix"
+    "github.com/libtnb/chix/v2"
 )
 
 func init() {
-    chix.JSONEncoder = json.NewEncoder
-    chix.JSONDecoder = json.NewDecoder
-    chix.XMLEncoder = xml.NewEncoder
-    chix.XMLDecoder = xml.NewDecoder
+    chix.JSONMarshal = sonic.Marshal
+    chix.JSONUnmarshal = sonic.Unmarshal
 }
 ```
 
@@ -188,7 +201,8 @@ router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 	render := chix.NewRender(w)
 	defer render.Release()
-	render.WithoutCookie("token")
+	render.WithoutCookie("token")           // deletes with Path=/
+	render.WithoutCookie("token", "/admin") // deletes with a custom path
 	// Your code...
 })
 ```
@@ -387,15 +401,9 @@ router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 	render := chix.NewRender(w)
  
-	hijacker, ok := render.Hijack()
-	if !ok {
-		// Hijacking not supported
-		return
-	}
- 
-	conn, bufrw, err := hijacker.Hijack()
+	conn, bufrw, err := render.Hijack()
 	if err != nil {
-		// Handle error
+		// Hijacking not supported or failed
 		return
 	}
 	defer conn.Close()

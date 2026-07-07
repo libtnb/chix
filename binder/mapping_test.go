@@ -399,7 +399,7 @@ func Test_parseToMap_Extended(t *testing.T) {
 
 func Test_decoderPoolMapInit(t *testing.T) {
 	for _, tag := range tags {
-		decAny := decoderPoolMap[tag].Get()
+		decAny := decoderPoolMap[tag].Load().Get()
 		dec, ok := decAny.(*schema.Decoder)
 		require.True(t, ok)
 		require.NotNil(t, dec)
@@ -409,7 +409,6 @@ func Test_decoderPoolMapInit(t *testing.T) {
 func Test_getFieldCache(t *testing.T) {
 	t.Parallel()
 	require.NotNil(t, getFieldCache("header"))
-	require.NotNil(t, getFieldCache("respHeader"))
 	require.NotNil(t, getFieldCache("cookie"))
 	require.NotNil(t, getFieldCache("form"))
 	require.NotNil(t, getFieldCache("uri"))

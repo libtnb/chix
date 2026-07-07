@@ -1,4 +1,4 @@
-module github.com/libtnb/chix
+module github.com/libtnb/chix/v2
 
 go 1.25.0
 

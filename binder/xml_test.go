@@ -1,7 +1,6 @@
 package binder
 
 import (
-	"bytes"
 	"encoding/xml"
 	"testing"
 
@@ -27,7 +26,7 @@ func Test_XMLBinding_Bind(t *testing.T) {
 	}
 
 	user := new(User)
-	err := b.Bind(xml.NewDecoder(bytes.NewReader([]byte(`
+	err := b.Bind([]byte(`
 		<user>
 			<name>john</name>
 			<age>42</age>
@@ -41,7 +40,7 @@ func Test_XMLBinding_Bind(t *testing.T) {
 				</post>
 			</posts>
 		</user>
-	`))), user)
+	`), xml.Unmarshal, user)
 	require.NoError(t, err)
 	require.Equal(t, "john", user.Name)
 	require.Equal(t, 42, user.Age)
@@ -62,13 +61,13 @@ func Test_XMLBinding_Bind_error(t *testing.T) {
 	}
 
 	user := new(User)
-	err := b.Bind(xml.NewDecoder(bytes.NewReader([]byte(`
+	err := b.Bind([]byte(`
 		<user>
 			<name>john</name>
 			<age>42</age>
 			<unknown>unknown</unknown>
 		</user
-	`))), user)
+	`), xml.Unmarshal, user)
 	require.Error(t, err)
 }
 
@@ -109,12 +108,12 @@ func Benchmark_XMLBinding_Bind(b *testing.B) {
 
 	var err error
 	for b.Loop() {
-		err = binder.Bind(xml.NewDecoder(bytes.NewReader(data)), user)
+		err = binder.Bind(data, xml.Unmarshal, user)
 	}
 	require.NoError(b, err)
 
 	user = new(User)
-	err = binder.Bind(xml.NewDecoder(bytes.NewReader(data)), user)
+	err = binder.Bind(data, xml.Unmarshal, user)
 	require.NoError(b, err)
 
 	require.Equal(b, "john", user.Name)

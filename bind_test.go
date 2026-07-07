@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 
-	"github.com/libtnb/chix"
+	"github.com/libtnb/chix/v2"
 )
 
 func TestBind_HeaderBindsCorrectly(t *testing.T) {
@@ -134,5 +134,50 @@ func TestBind_BodyReturnsErrorForUnsupportedContentType(t *testing.T) {
 	b := chix.NewBind(req)
 	out := make(map[string]string)
 	err := b.Body(&out)
-	require.Error(t, err)
+	require.ErrorIs(t, err, chix.ErrUnsupportedMediaType)
+}
+
+func TestBind_URIWithoutRouteContext(t *testing.T) {
+	req := httptest.NewRequest("GET", "/test/value", nil)
+	b := chix.NewBind(req)
+	out := make(map[string]string)
+	err := b.URI(&out)
+	require.ErrorIs(t, err, chix.ErrNoRouteContext)
+}
+
+func TestBind_QueryPreservesMultipleValues(t *testing.T) {
+	type Query struct {
+		A []string `query:"a"`
+		B []string `query:"b"`
+	}
+
+	req := httptest.NewRequest("GET", "/?a=1&a=2&b=hello,world&b=foo", nil)
+	var out Query
+	b := chix.NewBind(req)
+	err := b.Query(&out)
+	require.NoError(t, err)
+	require.Equal(t, []string{"1", "2"}, out.A)
+	// Without splitting, values containing commas must stay intact.
+	require.Equal(t, []string{"hello,world", "foo"}, out.B)
+
+	var split Query
+	bs := chix.NewBind(req, true)
+	err = bs.Query(&split)
+	require.NoError(t, err)
+	require.Equal(t, []string{"1", "2"}, split.A)
+	require.Equal(t, []string{"hello", "world", "foo"}, split.B)
+}
+
+func TestBind_FormPreservesMultipleValues(t *testing.T) {
+	type Form struct {
+		A []string `form:"a"`
+	}
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader("a=1&a=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	var out Form
+	b := chix.NewBind(req)
+	err := b.Form(&out)
+	require.NoError(t, err)
+	require.Equal(t, []string{"1", "2"}, out.A)
 }

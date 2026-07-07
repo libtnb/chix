@@ -1,7 +1,6 @@
 package binder
 
 import (
-	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -25,7 +24,7 @@ func Test_JSON_Binding_Bind(t *testing.T) {
 	}
 	var user User
 
-	err := b.Bind(json.NewDecoder(bytes.NewReader([]byte(`{"name":"john","age":42,"posts":[{"title":"post1"},{"title":"post2"},{"title":"post3"}]}`))), &user)
+	err := b.Bind([]byte(`{"name":"john","age":42,"posts":[{"title":"post1"},{"title":"post2"},{"title":"post3"}]}`), json.Unmarshal, &user)
 	require.NoError(t, err)
 	require.Equal(t, "john", user.Name)
 	require.Equal(t, 42, user.Age)
@@ -49,7 +48,7 @@ func Benchmark_JSON_Binding_Bind(b *testing.B) {
 	var user User
 	var err error
 	for b.Loop() {
-		err = binder.Bind(json.NewDecoder(bytes.NewReader([]byte(`{"name":"john","age":42,"posts":["post1","post2","post3"]}`))), &user)
+		err = binder.Bind([]byte(`{"name":"john","age":42,"posts":["post1","post2","post3"]}`), json.Unmarshal, &user)
 	}
 
 	require.NoError(b, err)

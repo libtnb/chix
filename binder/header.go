@@ -2,7 +2,6 @@ package binder
 
 import (
 	"net/http"
-	"strings"
 )
 
 type headerBinding struct{}
@@ -18,7 +17,7 @@ func (b *headerBinding) Bind(r *http.Request, out any, enableSplitting ...bool) 
 	}
 
 	for k, v := range r.Header {
-		if err := formatBindData(b.Name(), out, data, k, strings.Join(v, ","), enableSplitting[0], false); err != nil {
+		if err := formatBindData(b.Name(), out, data, k, v, enableSplitting[0], false); err != nil {
 			return err
 		}
 	}

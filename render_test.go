@@ -2,10 +2,11 @@ package chix_test
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/xml"
 	"fmt"
-	"github.com/libtnb/chix/renderer"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/libtnb/chix"
+	"github.com/libtnb/chix/v2"
+	"github.com/libtnb/chix/v2/renderer"
 )
 
 func TestRender_ContentType(t *testing.T) {
@@ -62,7 +64,14 @@ func TestRender_WithoutCookie(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := chix.NewRender(w)
 	r.WithoutCookie("test")
-	require.Equal(t, "test=; Max-Age=0", w.Header().Get("Set-Cookie"))
+	require.Equal(t, "test=; Path=/; Max-Age=0", w.Header().Get("Set-Cookie"))
+}
+
+func TestRender_WithoutCookieCustomPath(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := chix.NewRender(w)
+	r.WithoutCookie("test", "/admin")
+	require.Equal(t, "test=; Path=/admin; Max-Age=0", w.Header().Get("Set-Cookie"))
 }
 
 func TestRender_PlainText(t *testing.T) {
@@ -90,14 +99,14 @@ func TestRender_JSON(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := chix.NewRender(w)
 	r.JSON(map[string]string{"key": "value"})
-	require.Equal(t, `{"key":"value"}`+"\n", w.Body.String())
+	require.Equal(t, `{"key":"value"}`, w.Body.String())
 }
 
 func TestRender_JSONP(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := chix.NewRender(w)
 	r.JSONP("callback", map[string]string{"key": "value"})
-	require.Equal(t, `callback({"key":"value"}`+"\n"+`);`, w.Body.String())
+	require.Equal(t, `callback({"key":"value"});`, w.Body.String())
 }
 
 func TestRender_XML(t *testing.T) {
@@ -321,10 +330,7 @@ func TestRender_Hijack(t *testing.T) {
 	}
 
 	r := chix.NewRender(w)
-	hijacker, ok := r.Hijack()
-	require.True(t, ok)
-	require.NotNil(t, hijacker)
-	conn, bufrw, err := hijacker.Hijack()
+	conn, bufrw, err := r.Hijack()
 	require.NoError(t, err)
 	require.Nil(t, conn)
 	require.NotNil(t, bufrw)
@@ -338,9 +344,69 @@ func TestRender_Hijack(t *testing.T) {
 func TestRender_HijackNotSupported(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := chix.NewRender(w)
-	hijacker, ok := r.Hijack()
-	require.False(t, ok)
-	require.Nil(t, hijacker)
+	_, _, err := r.Hijack()
+	require.Error(t, err)
+}
+
+func TestRender_SSEventMultipleCalls(t *testing.T) {
+	// SSEvent is meant to be called repeatedly on one stream; the status code
+	// must be written exactly once or net/http logs "superfluous WriteHeader".
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r := chix.NewRender(w, req)
+		defer r.Release()
+		r.SSEvent(renderer.SSEvent{Event: "a", Data: strings.NewReader("1")})
+		r.SSEvent(renderer.SSEvent{Event: "b", Data: strings.NewReader("2")})
+	}))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	require.Contains(t, string(body), "event: a\ndata: 1\n\n")
+	require.Contains(t, string(body), "event: b\ndata: 2\n\n")
+	require.NotContains(t, logBuf.String(), "superfluous")
+}
+
+func TestRender_EventStreamWithNil(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	r := chix.NewRender(w, req)
+	r.EventStream(nil)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Contains(t, w.Body.String(), "EventStream expects a channel")
+}
+
+func TestRender_EventStreamWithSendOnlyChannel(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	r := chix.NewRender(w, req)
+	ch := make(chan string)
+	r.EventStream((chan<- string)(ch))
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Contains(t, w.Body.String(), "receivable channel")
+}
+
+func TestRender_DownloadNonASCIIFilename(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/", nil)
+	f, err := os.CreateTemp("", "test.txt")
+	require.NoError(t, err)
+	defer func(name string) {
+		_ = os.Remove(name)
+	}(f.Name())
+	_, err = f.WriteString("test file content")
+	require.NoError(t, err)
+	r := chix.NewRender(w, req)
+	// Spaces must be percent-encoded (%20), not "+", per RFC 5987.
+	r.Download(f.Name(), "报告 final.pdf")
+	require.Equal(t, `attachment; filename*=UTF-8''%E6%8A%A5%E5%91%8A%20final.pdf`, w.Header().Get("Content-Disposition"))
 }
 
 func TestRender_Release(t *testing.T) {

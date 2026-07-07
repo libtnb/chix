@@ -1,9 +1,7 @@
 package renderer
 
 import (
-	"bufio"
 	"bytes"
-	"fmt"
 	"io"
 	"strconv"
 )
@@ -19,33 +17,44 @@ type SSEvent struct {
 }
 
 func SSEventEncode(writer io.Writer, event SSEvent) error {
-	buf := bufio.NewWriter(writer)
+	var buf bytes.Buffer
 	if len(event.Event) > 0 {
-		_, err := fmt.Fprintf(buf, "event: %s\n", event.Event)
-		if err != nil {
-			return err
-		}
+		buf.WriteString("event: ")
+		buf.WriteString(event.Event)
+		buf.WriteByte('\n')
 	}
 	if len(event.ID) > 0 {
-		_, err := fmt.Fprintf(buf, "id: %s\n", event.ID)
-		if err != nil {
-			return err
-		}
+		buf.WriteString("id: ")
+		buf.WriteString(event.ID)
+		buf.WriteByte('\n')
 	}
 	if event.Retry > 0 {
-		_, err := fmt.Fprintf(buf, "retry: %d\n", event.Retry)
+		buf.WriteString("retry: ")
+		buf.WriteString(strconv.FormatUint(uint64(event.Retry), 10))
+		buf.WriteByte('\n')
+	}
+
+	// Data is optional, e.g. for heartbeat events carrying only event/id/retry.
+	if event.Data != nil {
+		raw, err := io.ReadAll(event.Data)
 		if err != nil {
 			return err
 		}
-	}
 
-	_, _ = buf.WriteString("data: ")
-	if _, err := io.Copy(buf, event.Data); err != nil {
-		return err
+		// Multi-line payloads must be split into one "data:" field per line,
+		// otherwise EventSource clients drop everything after the first line.
+		raw = bytes.ReplaceAll(raw, []byte{'\r', '\n'}, []byte{'\n'})
+		raw = bytes.ReplaceAll(raw, []byte{'\r'}, []byte{'\n'})
+		for line := range bytes.SplitSeq(raw, []byte{'\n'}) {
+			buf.WriteString("data: ")
+			buf.Write(line)
+			buf.WriteByte('\n')
+		}
 	}
-	_, _ = buf.WriteString("\n\n")
+	buf.WriteByte('\n')
 
-	return buf.Flush()
+	_, err := writer.Write(buf.Bytes())
+	return err
 }
 
 func SSEventDecode(reader io.Reader) ([]SSEvent, error) {

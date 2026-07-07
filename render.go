@@ -1,17 +1,20 @@
 package chix
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"reflect"
-	"strings"
 	"sync"
 
-	"github.com/libtnb/chix/renderer"
+	"github.com/libtnb/chix/v2/renderer"
 )
 
 var renderPool = sync.Pool{
@@ -29,7 +32,7 @@ type Render struct {
 	contentTypeSet bool
 }
 
-// NewRender creates a new NewRender instance.
+// NewRender creates a new Render instance.
 func NewRender(w http.ResponseWriter, r ...*http.Request) *Render {
 	render := renderPool.Get().(*Render)
 	render.statusCode = http.StatusOK
@@ -53,11 +56,19 @@ func (r *Render) Status(status int) {
 	r.statusCode = status
 }
 
-// SendStatus is a warpper for WriteHeader method, will send the status code immediately.
+// SendStatus is a wrapper for WriteHeader method, will send the status code immediately.
 func (r *Render) SendStatus(status int) {
 	r.statusCode = status
 	r.w.WriteHeader(status)
 	r.statusCodeSent = true
+}
+
+// writeStatus sends the pending status code, at most once per response.
+func (r *Render) writeStatus() {
+	if !r.statusCodeSent {
+		r.w.WriteHeader(r.statusCode)
+		r.statusCodeSent = true
+	}
 }
 
 // Header sets the provided header key/value pair in the response.
@@ -70,10 +81,17 @@ func (r *Render) Cookie(cookie *http.Cookie) {
 	http.SetCookie(r.w, cookie)
 }
 
-// WithoutCookie deletes a cookie in the response.
-func (r *Render) WithoutCookie(name string) {
+// WithoutCookie deletes a cookie in the response. The optional path must match
+// the Path attribute the cookie was set with, it defaults to "/".
+func (r *Render) WithoutCookie(name string, path ...string) {
+	cookiePath := "/"
+	if len(path) > 0 {
+		cookiePath = path[0]
+	}
+
 	http.SetCookie(r.w, &http.Cookie{
 		Name:   name,
+		Path:   cookiePath,
 		MaxAge: -1,
 	})
 }
@@ -106,9 +124,7 @@ func (r *Render) PlainText(v string) {
 	if !r.contentTypeSet {
 		r.w.Header().Set(HeaderContentType, MIMETextPlainCharsetUTF8)
 	}
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
+	r.writeStatus()
 	_, _ = r.w.Write([]byte(v))
 }
 
@@ -118,9 +134,7 @@ func (r *Render) Data(v []byte) {
 	if !r.contentTypeSet {
 		r.w.Header().Set(HeaderContentType, MIMEOctetStream)
 	}
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
+	r.writeStatus()
 	_, _ = r.w.Write(v)
 }
 
@@ -130,19 +144,15 @@ func (r *Render) HTML(v string) {
 	if !r.contentTypeSet {
 		r.w.Header().Set(HeaderContentType, MIMETextHTMLCharsetUTF8)
 	}
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
+	r.writeStatus()
 	_, _ = r.w.Write([]byte(v))
 }
 
-// JSON marshals 'v' to JSON, automatically escaping HTML and setting the
-// Content-Type as application/json if not set.
+// JSON marshals 'v' to JSON using JSONMarshal and setting the Content-Type as
+// application/json if not set.
 func (r *Render) JSON(v any) {
-	buf := new(bytes.Buffer)
-	enc := JSONEncoder(buf)
-	enc.SetEscapeHTML(true)
-	if err := enc.Encode(v); err != nil {
+	data, err := JSONMarshal(v)
+	if err != nil {
 		http.Error(r.w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -150,19 +160,15 @@ func (r *Render) JSON(v any) {
 	if !r.contentTypeSet {
 		r.w.Header().Set(HeaderContentType, MIMEApplicationJSONCharsetUTF8)
 	}
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
-	_, _ = r.w.Write(buf.Bytes())
+	r.writeStatus()
+	_, _ = r.w.Write(data)
 }
 
-// JSONP marshals 'v' to JSON, automatically escaping HTML and setting the
-// Content-Type as application/javascript if not set.
+// JSONP marshals 'v' to JSON using JSONMarshal and setting the Content-Type as
+// application/javascript if not set.
 func (r *Render) JSONP(callback string, v any) {
-	buf := new(bytes.Buffer)
-	enc := JSONEncoder(buf)
-	enc.SetEscapeHTML(true)
-	if err := enc.Encode(v); err != nil {
+	data, err := JSONMarshal(v)
+	if err != nil {
 		http.Error(r.w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -170,21 +176,18 @@ func (r *Render) JSONP(callback string, v any) {
 	if !r.contentTypeSet {
 		r.w.Header().Set(HeaderContentType, MIMEApplicationJavaScriptCharsetUTF8)
 	}
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
+	r.writeStatus()
 	_, _ = r.w.Write([]byte(callback + "("))
-	_, _ = r.w.Write(buf.Bytes())
+	_, _ = r.w.Write(data)
 	_, _ = r.w.Write([]byte(");"))
 }
 
-// XML marshals 'v' to XML, setting the Content-Type as application/xml if not set. It
-// will automatically prepend a generic XML header (see encoding/xml.Header) if
-// one is not found in the first 100 bytes of 'v'.
+// XML marshals 'v' to XML using XMLMarshal, setting the Content-Type as
+// application/xml if not set. It will automatically prepend a generic XML header
+// (see encoding/xml.Header) if one is not found in the first 100 bytes of 'v'.
 func (r *Render) XML(v any) {
-	buf := new(bytes.Buffer)
-	enc := XMLEncoder(buf)
-	if err := enc.Encode(v); err != nil {
+	data, err := XMLMarshal(v)
+	if err != nil {
 		http.Error(r.w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -192,26 +195,22 @@ func (r *Render) XML(v any) {
 	if !r.contentTypeSet {
 		r.w.Header().Set(HeaderContentType, MIMEApplicationXMLCharsetUTF8)
 	}
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
+	r.writeStatus()
 
 	// Try to find <?xml header in first 100 bytes (just in case there're some XML comments).
-	findHeaderUntil := buf.Len()
-	if findHeaderUntil > 100 {
-		findHeaderUntil = 100
-	}
-	if !bytes.Contains(buf.Bytes()[:findHeaderUntil], []byte("<?xml")) {
+	findHeaderUntil := min(len(data), 100)
+	if !bytes.Contains(data[:findHeaderUntil], []byte("<?xml")) {
 		// No header found. Print it out first.
 		_, _ = r.w.Write([]byte(xml.Header))
 	}
 
-	_, _ = r.w.Write(buf.Bytes())
+	_, _ = r.w.Write(data)
 }
 
 // NoContent returns a HTTP 204 "No Content" response.
 func (r *Render) NoContent() {
-	r.w.WriteHeader(http.StatusNoContent)
+	r.statusCode = http.StatusNoContent
+	r.writeStatus()
 }
 
 // Stream sends a streaming response and returns a boolean
@@ -222,9 +221,7 @@ func (r *Render) Stream(step func(w io.Writer) bool) bool {
 		return false
 	}
 
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
+	r.writeStatus()
 
 	for {
 		select {
@@ -247,8 +244,17 @@ func (r *Render) EventStream(v any) {
 		http.Error(r.w, "chix: EventStream requires passing *http.Request", http.StatusInternalServerError)
 		return
 	}
-	if reflect.TypeOf(v).Kind() != reflect.Chan {
-		http.Error(r.w, fmt.Sprintf("chix: EventStream expects a channel, not %v", reflect.TypeOf(v).Kind()), http.StatusInternalServerError)
+	typ := reflect.TypeOf(v)
+	if typ == nil || typ.Kind() != reflect.Chan {
+		kind := "nil"
+		if typ != nil {
+			kind = typ.Kind().String()
+		}
+		http.Error(r.w, "chix: EventStream expects a channel, not "+kind, http.StatusInternalServerError)
+		return
+	}
+	if typ.ChanDir() == reflect.SendDir {
+		http.Error(r.w, "chix: EventStream expects a receivable channel", http.StatusInternalServerError)
 		return
 	}
 
@@ -263,21 +269,21 @@ func (r *Render) EventStream(v any) {
 		r.w.Header().Set(HeaderConnection, "keep-alive")
 	}
 
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
+	r.writeStatus()
 
 	ctx := r.r.Context()
-	buf := new(strings.Builder)
-	enc := JSONEncoder(buf)
-	enc.SetEscapeHTML(true)
 	for {
-		switch chosen, recv, ok := reflect.Select([]reflect.SelectCase{
+		chosen, recv, ok := reflect.Select([]reflect.SelectCase{
 			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(ctx.Done())},
 			{Dir: reflect.SelectRecv, Chan: reflect.ValueOf(v)},
-		}); chosen {
+		})
+		switch chosen {
 		case 0: // equivalent to: case <-ctx.Done()
-			_, _ = r.w.Write([]byte("event: error\ndata: {\"error\":\"Server Timeout\"}\n\n"))
+			// Only report server-side timeouts; when the context is canceled
+			// the client is usually gone and nobody reads the stream anymore.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				_, _ = r.w.Write([]byte("event: error\ndata: {\"error\":\"server timeout\"}\n\n"))
+			}
 			return
 
 		default: // equivalent to: case v, ok := <-stream
@@ -286,16 +292,16 @@ func (r *Render) EventStream(v any) {
 				return
 			}
 
-			v := recv.Interface()
-			if err := enc.Encode(v); err != nil {
-				_, _ = fmt.Fprintf(r.w, "event: error\ndata: {\"error\":\"%v\"}\n\n", err)
+			data, err := JSONMarshal(recv.Interface())
+			if err != nil {
+				msg, _ := JSONMarshal(M{"error": err.Error()})
+				_, _ = fmt.Fprintf(r.w, "event: error\ndata: %s\n\n", msg)
 				r.Flush()
 				continue
 			}
 
-			_, _ = fmt.Fprintf(r.w, "event: data\ndata: %s\n\n", buf.String())
+			_, _ = fmt.Fprintf(r.w, "event: data\ndata: %s\n\n", data)
 			r.Flush()
-			buf.Reset()
 		}
 	}
 }
@@ -319,9 +325,7 @@ func (r *Render) SSEvent(event renderer.SSEvent) {
 		r.w.Header().Set(HeaderConnection, "keep-alive")
 	}
 
-	if !r.statusCodeSent {
-		r.w.WriteHeader(r.statusCode)
-	}
+	r.writeStatus()
 	_ = renderer.SSEventEncode(r.w, event)
 }
 
@@ -345,7 +349,9 @@ func (r *Render) Download(filepath, filename string) {
 	if isASCII(filename) {
 		r.Header(HeaderContentDisposition, `attachment; filename="`+quoteEscape(filename)+`"`)
 	} else {
-		r.Header(HeaderContentDisposition, `attachment; filename*=UTF-8''`+url.QueryEscape(filename))
+		// RFC 5987 requires percent-encoding; PathEscape keeps spaces as %20
+		// (QueryEscape would turn them into "+", which browsers keep literally).
+		r.Header(HeaderContentDisposition, `attachment; filename*=UTF-8''`+url.PathEscape(filename))
 	}
 
 	http.ServeFile(r.w, r.r, filepath)
@@ -353,15 +359,13 @@ func (r *Render) Download(filepath, filename string) {
 
 // Flush sends any buffered data to the response.
 func (r *Render) Flush() {
-	if f, ok := r.w.(http.Flusher); ok {
-		f.Flush()
-	}
+	_ = http.NewResponseController(r.w).Flush()
 }
 
-// Hijack returns the underlying Hijacker interface.
-func (r *Render) Hijack() (http.Hijacker, bool) {
-	h, ok := r.w.(http.Hijacker)
-	return h, ok
+// Hijack takes over the underlying connection, letting the caller manage it.
+// It returns an error if the underlying ResponseWriter does not support hijacking.
+func (r *Render) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(r.w).Hijack()
 }
 
 // Release puts the Render instance back into the pool.

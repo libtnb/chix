@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gofiber/schema"
 )
@@ -28,8 +29,10 @@ type ParserType struct {
 }
 
 var (
-	// decoderPoolMap helps to improve binders
-	decoderPoolMap = map[string]*sync.Pool{}
+	// decoderPoolMap helps to improve binders performance. The pools are held
+	// behind atomic pointers so SetParserDecoder can swap them without racing
+	// against concurrent requests; the map itself is only written during init.
+	decoderPoolMap = map[string]*atomic.Pointer[sync.Pool]{}
 	// tags is used to classify parser's pool
 	tags = []string{HeaderBinder.Name(), CookieBinder.Name(), QueryBinder.Name(), FormBinder.Name(), URIBinder.Name()}
 )
@@ -37,9 +40,10 @@ var (
 // SetParserDecoder allow globally change the option of form decoder, update decoderPool
 func SetParserDecoder(parserConfig ParserConfig) {
 	for _, tag := range tags {
-		decoderPoolMap[tag] = &sync.Pool{New: func() any {
+		pool := &sync.Pool{New: func() any {
 			return decoderBuilder(parserConfig)
 		}}
+		decoderPoolMap[tag].Store(pool)
 	}
 }
 
@@ -58,12 +62,15 @@ func decoderBuilder(parserConfig ParserConfig) any {
 
 func init() {
 	for _, tag := range tags {
-		decoderPoolMap[tag] = &sync.Pool{New: func() any {
+		pool := &sync.Pool{New: func() any {
 			return decoderBuilder(ParserConfig{
 				IgnoreUnknownKeys: true,
 				ZeroEmpty:         true,
 			})
 		}}
+		ptr := &atomic.Pointer[sync.Pool]{}
+		ptr.Store(pool)
+		decoderPoolMap[tag] = ptr
 	}
 }
 
@@ -81,11 +88,13 @@ func parse(aliasTag string, out any, data map[string][]string, files ...map[stri
 	return parseToStruct(aliasTag, out, data, files...)
 }
 
-// Parse data into the struct with gorilla/schema
+// Parse data into the struct with gofiber/schema
 func parseToStruct(aliasTag string, out any, data map[string][]string, files ...map[string][]*multipart.FileHeader) error {
-	// Get decoder from pool
-	schemaDecoder := decoderPoolMap[aliasTag].Get().(*schema.Decoder) //nolint:errcheck,forcetypeassert // not needed
-	defer decoderPoolMap[aliasTag].Put(schemaDecoder)
+	// Get decoder from pool. Keep the loaded pool in a local so Get and Put
+	// always operate on the same pool even if SetParserDecoder swaps it.
+	pool := decoderPoolMap[aliasTag].Load()
+	schemaDecoder := pool.Get().(*schema.Decoder)
+	defer pool.Put(schemaDecoder)
 
 	// Set alias tag
 	schemaDecoder.SetAliasTag(aliasTag)
@@ -193,20 +202,17 @@ type fieldInfo struct {
 }
 
 var (
-	headerFieldCache     sync.Map
-	respHeaderFieldCache sync.Map
-	cookieFieldCache     sync.Map
-	queryFieldCache      sync.Map
-	formFieldCache       sync.Map
-	uriFieldCache        sync.Map
+	headerFieldCache sync.Map
+	cookieFieldCache sync.Map
+	queryFieldCache  sync.Map
+	formFieldCache   sync.Map
+	uriFieldCache    sync.Map
 )
 
 func getFieldCache(aliasTag string) *sync.Map {
 	switch aliasTag {
 	case "header":
 		return &headerFieldCache
-	case "respHeader":
-		return &respHeaderFieldCache
 	case "cookie":
 		return &cookieFieldCache
 	case "form":
@@ -292,12 +298,12 @@ func FilterFlags(content string) string {
 }
 
 func formatBindData[T, K any](aliasTag string, out any, data map[string][]T, key string, value K, enableSplitting, supportBracketNotation bool) error { //nolint:revive // it's okay
-	var err error
 	if supportBracketNotation && strings.Contains(key, "[") {
-		key, err = parseParamSquareBrackets(key)
+		parsed, err := parseParamSquareBrackets(key)
 		if err != nil {
 			return err
 		}
+		key = parsed
 	}
 
 	switch v := any(value).(type) {
@@ -329,7 +335,7 @@ func formatBindData[T, K any](aliasTag string, out any, data map[string][]T, key
 		return fmt.Errorf("unsupported value type: %T", value)
 	}
 
-	return err
+	return nil
 }
 
 func assignBindData(aliasTag string, out any, data map[string][]string, key, value string, enableSplitting bool) { //nolint:revive // it's okay

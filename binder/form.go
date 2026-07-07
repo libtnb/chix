@@ -1,9 +1,9 @@
 package binder
 
 import (
+	"fmt"
 	"mime/multipart"
 	"net/http"
-	"strings"
 )
 
 type formBinding struct{}
@@ -19,11 +19,11 @@ func (b *formBinding) Bind(r *http.Request, out any, enableSplitting ...bool) er
 	}
 
 	if err := r.ParseForm(); err != nil {
-		return err
+		return fmt.Errorf("bind: %w", err)
 	}
 
 	for k, v := range r.PostForm {
-		if err := formatBindData(b.Name(), out, data, k, strings.Join(v, ","), enableSplitting[0], true); err != nil {
+		if err := formatBindData(b.Name(), out, data, k, v, enableSplitting[0], true); err != nil {
 			return err
 		}
 	}
@@ -33,7 +33,7 @@ func (b *formBinding) Bind(r *http.Request, out any, enableSplitting ...bool) er
 
 func (b *formBinding) BindMultipart(r *http.Request, out any, size int64, enableSplitting ...bool) error {
 	if err := r.ParseMultipartForm(size); err != nil {
-		return err
+		return fmt.Errorf("bind: %w", err)
 	}
 	if len(enableSplitting) == 0 {
 		enableSplitting = append(enableSplitting, false)

@@ -2,7 +2,6 @@ package binder
 
 import (
 	"net/http"
-	"strings"
 )
 
 type queryBinding struct{}
@@ -18,7 +17,7 @@ func (b *queryBinding) Bind(r *http.Request, out any, enableSplitting ...bool) e
 	}
 
 	for k, v := range r.URL.Query() {
-		if err := formatBindData(b.Name(), out, data, k, strings.Join(v, ","), enableSplitting[0], true); err != nil {
+		if err := formatBindData(b.Name(), out, data, k, v, enableSplitting[0], true); err != nil {
 			return err
 		}
 	}

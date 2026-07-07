@@ -96,9 +96,25 @@ func TestSSEventEncode_MultilineData(t *testing.T) {
 	err := SSEventEncode(&buf, event)
 	require.NoError(t, err)
 
+	// Each line must become its own "data:" field, per the SSE spec.
 	result := buf.String()
 	require.Contains(t, result, "event: multiline\n")
-	require.Contains(t, result, "data: line1\nline2\nline3\n\n")
+	require.Contains(t, result, "data: line1\ndata: line2\ndata: line3\n\n")
+
+	// The decoder must reassemble the original payload.
+	events, err := SSEventDecode(strings.NewReader(result))
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	data, err := io.ReadAll(events[0].Data)
+	require.NoError(t, err)
+	require.Equal(t, "line1\nline2\nline3", string(data))
+}
+
+func TestSSEventEncode_NilData(t *testing.T) {
+	var buf bytes.Buffer
+	err := SSEventEncode(&buf, SSEvent{Event: "ping", ID: "1"})
+	require.NoError(t, err)
+	require.Equal(t, "event: ping\nid: 1\n\n", buf.String())
 }
 
 func TestSSEventDecode_SingleEvent(t *testing.T) {

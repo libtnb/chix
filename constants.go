@@ -8,12 +8,14 @@ import (
 // M is a convenience alias for quickly building a map structure.
 type M map[string]any
 
-// JSON/XML Encoders and Decoders
+// JSON/XML marshal and unmarshal functions used by Bind and Render. They can
+// be swapped globally for any implementation matching the standard library
+// signatures, e.g. sonic.Marshal / sonic.Unmarshal.
 var (
-	JSONEncoder = json.NewEncoder
-	JSONDecoder = json.NewDecoder
-	XMLEncoder  = xml.NewEncoder
-	XMLDecoder  = xml.NewDecoder
+	JSONMarshal   = json.Marshal
+	JSONUnmarshal = json.Unmarshal
+	XMLMarshal    = xml.Marshal
+	XMLUnmarshal  = xml.Unmarshal
 )
 
 // MIME types that are commonly used
