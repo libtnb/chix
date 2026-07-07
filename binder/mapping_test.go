@@ -133,7 +133,7 @@ func Test_parseToMap(t *testing.T) {
 
 	// Test map[string]string
 	m := make(map[string]string)
-	err := parseToMap(m, inputMap)
+	err := parseToMap(reflect.ValueOf(m), inputMap)
 	require.NoError(t, err)
 
 	require.Equal(t, "value2", m["key1"])
@@ -142,7 +142,7 @@ func Test_parseToMap(t *testing.T) {
 
 	// Test map[string][]string
 	m2 := make(map[string][]string)
-	err = parseToMap(m2, inputMap)
+	err = parseToMap(reflect.ValueOf(m2), inputMap)
 	require.NoError(t, err)
 
 	require.Len(t, m2["key1"], 2)
@@ -151,10 +151,22 @@ func Test_parseToMap(t *testing.T) {
 	require.Len(t, m2["key2"], 1)
 	require.Len(t, m2["key3"], 1)
 
-	// Test map[string]any
+	// Test map[string]any: interface element maps are a successful no-op
 	m3 := make(map[string]any)
-	err = parseToMap(m3, inputMap)
-	require.ErrorIs(t, err, ErrMapNotConvertible)
+	err = parseToMap(reflect.ValueOf(m3), inputMap)
+	require.NoError(t, err)
+	require.Empty(t, m3)
+
+	// Test nil map through a settable pointer: it must be initialized
+	var m4 map[string]string
+	err = parseToMap(reflect.ValueOf(&m4).Elem(), inputMap)
+	require.NoError(t, err)
+	require.Equal(t, "value2", m4["key1"])
+
+	// Test nil map without a settable destination
+	var m5 map[string]string
+	err = parseToMap(reflect.ValueOf(m5), inputMap)
+	require.ErrorIs(t, err, ErrMapNilDestination)
 }
 
 func Test_FilterFlags(t *testing.T) {
@@ -357,7 +369,8 @@ func Test_decoderBuilder(t *testing.T) {
 		return reflect.ValueOf(customInt(i))
 	}
 	parserConfig := ParserConfig{
-		SetAliasTag: "custom",
+		// SetAliasTag is ignored; the per-source tag passed to decoderBuilder wins.
+		SetAliasTag: "ignored",
 		ParserType: []ParserType{{
 			CustomType: customInt(0),
 			Converter:  conv,
@@ -365,7 +378,7 @@ func Test_decoderBuilder(t *testing.T) {
 		IgnoreUnknownKeys: false,
 		ZeroEmpty:         false,
 	}
-	decAny := decoderBuilder(parserConfig)
+	decAny := decoderBuilder("custom", parserConfig)
 	dec, ok := decAny.(*schema.Decoder)
 	require.True(t, ok)
 	var out struct {
@@ -384,16 +397,16 @@ func Test_parseToMap_Extended(t *testing.T) {
 	}
 
 	m := make(map[string]string)
-	err := parseToMap(m, data)
+	err := parseToMap(reflect.ValueOf(m), data)
 	require.NoError(t, err)
 	require.Equal(t, "", m["empty"])
 
 	m2 := make(map[string][]int)
-	err = parseToMap(m2, data)
+	err = parseToMap(reflect.ValueOf(m2), data)
 	require.ErrorIs(t, err, ErrMapNotConvertible)
 
 	m3 := make(map[string]int)
-	err = parseToMap(m3, data)
+	err = parseToMap(reflect.ValueOf(m3), data)
 	require.NoError(t, err)
 }
 

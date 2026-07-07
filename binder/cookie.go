@@ -7,14 +7,16 @@ import (
 type cookieBinding struct{}
 
 func (*cookieBinding) Name() string {
-	return "cookie"
+	return bindingCookie
 }
 
 func (b *cookieBinding) Bind(r *http.Request, out any, enableSplitting ...bool) error {
-	data := make(map[string][]string)
 	if len(enableSplitting) == 0 {
 		enableSplitting = append(enableSplitting, false)
 	}
+
+	data := acquireDataMap()
+	defer releaseDataMap(data)
 
 	for _, cookie := range r.Cookies() {
 		k := cookie.Name

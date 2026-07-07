@@ -216,3 +216,26 @@ func TestBind_FormPreservesMultipleValues(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"1", "2"}, out.A)
 }
+
+func TestBind_QueryNilMapIsInitialized(t *testing.T) {
+	req := httptest.NewRequest("GET", "/?key=value", nil)
+	b := chix.NewBind(req)
+	var out map[string]string
+	err := b.Query(&out)
+	require.NoError(t, err)
+	require.Equal(t, "value", out["key"])
+}
+
+func TestBind_QuerySplitsPointerBackedSlice(t *testing.T) {
+	type Query struct {
+		Tags *[]string `query:"tags"`
+	}
+
+	req := httptest.NewRequest("GET", "/?tags=a,b,c", nil)
+	var out Query
+	b := chix.NewBind(req, true)
+	err := b.Query(&out)
+	require.NoError(t, err)
+	require.NotNil(t, out.Tags)
+	require.Equal(t, []string{"a", "b", "c"}, *out.Tags)
+}

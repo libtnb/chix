@@ -1,7 +1,6 @@
 package binder
 
 import (
-	"errors"
 	"fmt"
 	"maps"
 	"mime/multipart"
@@ -11,10 +10,14 @@ import (
 	"sync/atomic"
 
 	"github.com/gofiber/schema"
+	utilsstrings "github.com/gofiber/utils/v2/strings"
 )
 
 // ParserConfig form decoder config for SetParserDecoder
 type ParserConfig struct {
+	// SetAliasTag is ignored: each binding source keeps its own alias tag
+	// (query/header/cookie/form/uri), so a single global tag is incompatible
+	// with per-source binding.
 	SetAliasTag       string
 	ParserType        []ParserType
 	IgnoreUnknownKeys bool
@@ -34,25 +37,26 @@ var (
 	// against concurrent requests; the map itself is only written during init.
 	decoderPoolMap = map[string]*atomic.Pointer[sync.Pool]{}
 	// tags is used to classify parser's pool
-	tags = []string{HeaderBinder.Name(), CookieBinder.Name(), QueryBinder.Name(), FormBinder.Name(), URIBinder.Name()}
+	tags = []string{bindingHeader, bindingCookie, bindingQuery, bindingForm, bindingURI}
 )
 
 // SetParserDecoder allow globally change the option of form decoder, update decoderPool
 func SetParserDecoder(parserConfig ParserConfig) {
 	for _, tag := range tags {
 		pool := &sync.Pool{New: func() any {
-			return decoderBuilder(parserConfig)
+			return decoderBuilder(tag, parserConfig)
 		}}
 		decoderPoolMap[tag].Store(pool)
 	}
 }
 
-func decoderBuilder(parserConfig ParserConfig) any {
+func decoderBuilder(aliasTag string, parserConfig ParserConfig) any {
 	decoder := schema.NewDecoder()
 	decoder.IgnoreUnknownKeys(parserConfig.IgnoreUnknownKeys)
-	if parserConfig.SetAliasTag != "" {
-		decoder.SetAliasTag(parserConfig.SetAliasTag)
-	}
+	// Bake the per-source tag once (pools are keyed per tag); doing it per
+	// request would reset the decoder's type cache. ParserConfig.SetAliasTag is
+	// not honored here: one global tag is incompatible with per-source binding.
+	decoder.SetAliasTag(aliasTag)
 	for _, v := range parserConfig.ParserType {
 		decoder.RegisterConverter(reflect.ValueOf(v.CustomType).Interface(), v.Converter)
 	}
@@ -63,7 +67,7 @@ func decoderBuilder(parserConfig ParserConfig) any {
 func init() {
 	for _, tag := range tags {
 		pool := &sync.Pool{New: func() any {
-			return decoderBuilder(ParserConfig{
+			return decoderBuilder(tag, ParserConfig{
 				IgnoreUnknownKeys: true,
 				ZeroEmpty:         true,
 			})
@@ -77,11 +81,15 @@ func init() {
 // parse data into the map or struct
 func parse(aliasTag string, out any, data map[string][]string, files ...map[string][]*multipart.FileHeader) error {
 	ptrVal := reflect.ValueOf(out)
-	ptrVal = reflect.Indirect(ptrVal)
+
+	// Get pointer value
+	if ptrVal.Kind() == reflect.Pointer {
+		ptrVal = ptrVal.Elem()
+	}
 
 	// Parse into the map
 	if ptrVal.Kind() == reflect.Map && ptrVal.Type().Key().Kind() == reflect.String {
-		return parseToMap(ptrVal.Interface(), data)
+		return parseToMap(ptrVal, data)
 	}
 
 	// Parse into the struct
@@ -96,9 +104,8 @@ func parseToStruct(aliasTag string, out any, data map[string][]string, files ...
 	schemaDecoder := pool.Get().(*schema.Decoder)
 	defer pool.Put(schemaDecoder)
 
-	// Set alias tag
-	schemaDecoder.SetAliasTag(aliasTag)
-
+	// The alias tag is baked in at build time (see decoderBuilder); setting it
+	// here would reset the decoder's type cache on every request.
 	if err := schemaDecoder.Decode(out, data, files...); err != nil {
 		return fmt.Errorf("bind: %w", err)
 	}
@@ -108,19 +115,36 @@ func parseToStruct(aliasTag string, out any, data map[string][]string, files ...
 
 // Parse data into the map
 // thanks to https://github.com/gin-gonic/gin/blob/master/binding/binding.go
-func parseToMap(ptr any, data map[string][]string) error {
-	elem := reflect.TypeOf(ptr).Elem()
+func parseToMap(target reflect.Value, data map[string][]string) error {
+	if !target.IsValid() {
+		return ErrInvalidDestinationValue
+	}
 
-	switch elem.Kind() {
+	if target.Kind() == reflect.Interface && !target.IsNil() {
+		target = target.Elem()
+	}
+
+	if target.Kind() != reflect.Map || target.Type().Key().Kind() != reflect.String {
+		return nil // nothing to do for non-map destinations
+	}
+
+	if target.IsNil() {
+		if !target.CanSet() {
+			return ErrMapNilDestination
+		}
+		target.Set(reflect.MakeMap(target.Type()))
+	}
+
+	switch target.Type().Elem().Kind() {
 	case reflect.Slice:
-		newMap, ok := ptr.(map[string][]string)
+		newMap, ok := target.Interface().(map[string][]string)
 		if !ok {
 			return ErrMapNotConvertible
 		}
 
 		maps.Copy(newMap, data)
-	case reflect.String, reflect.Interface:
-		newMap, ok := ptr.(map[string]string)
+	case reflect.String:
+		newMap, ok := target.Interface().(map[string]string)
 		if !ok {
 			return ErrMapNotConvertible
 		}
@@ -134,6 +158,10 @@ func parseToMap(ptr any, data map[string][]string) error {
 			newMap[k] = v[len(v)-1]
 		}
 	default:
+		// Interface element maps (e.g. map[string]any) are left untouched because
+		// the binder cannot safely infer element conversions without mutating
+		// caller-provided values. These destinations therefore see a successful
+		// no-op parse.
 		return nil // it's not necessary to check all types
 	}
 
@@ -150,9 +178,7 @@ func parseParamSquareBrackets(k string) (string, error) {
 		if b == '[' {
 			openBracketsCount++
 			if i+1 < len(kbytes) && kbytes[i+1] != ']' {
-				if err := sb.WriteByte('.'); err != nil {
-					return "", err //nolint:wrapcheck // unnecessary to wrap it
-				}
+				sb.WriteByte('.')
 			}
 			continue
 		}
@@ -160,18 +186,16 @@ func parseParamSquareBrackets(k string) (string, error) {
 		if b == ']' {
 			openBracketsCount--
 			if openBracketsCount < 0 {
-				return "", errors.New("unmatched brackets")
+				return "", ErrUnmatchedBrackets
 			}
 			continue
 		}
 
-		if err := sb.WriteByte(b); err != nil {
-			return "", err //nolint:wrapcheck // unnecessary to wrap it
-		}
+		sb.WriteByte(b)
 	}
 
 	if openBracketsCount > 0 {
-		return "", errors.New("unmatched brackets")
+		return "", ErrUnmatchedBrackets
 	}
 
 	return sb.String(), nil
@@ -181,24 +205,39 @@ func isStringKeyMap(t reflect.Type) bool {
 	return t.Kind() == reflect.Map && t.Key().Kind() == reflect.String
 }
 
-func isExported(f reflect.StructField) bool {
+func isExported(f *reflect.StructField) bool {
+	if f == nil {
+		return false
+	}
 	return f.PkgPath == ""
 }
 
-func fieldName(f reflect.StructField, aliasTag string) string {
+func fieldName(f *reflect.StructField, aliasTag string) string {
+	if f == nil {
+		return ""
+	}
+
 	name := f.Tag.Get(aliasTag)
 	if name == "" {
 		name = f.Name
-	} else {
-		name = strings.Split(name, ",")[0]
+	} else if first, _, found := strings.Cut(name, ","); found {
+		name = first
 	}
 
-	return strings.ToLower(name)
+	return utilsstrings.ToLower(name)
 }
 
 type fieldInfo struct {
 	names       map[string]reflect.Kind
 	nestedKinds map[reflect.Kind]struct{}
+}
+
+func unwrapType(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+
+	return t
 }
 
 var (
@@ -211,15 +250,15 @@ var (
 
 func getFieldCache(aliasTag string) *sync.Map {
 	switch aliasTag {
-	case "header":
+	case bindingHeader:
 		return &headerFieldCache
-	case "cookie":
+	case bindingCookie:
 		return &cookieFieldCache
-	case "form":
+	case bindingForm:
 		return &formFieldCache
-	case "uri":
+	case bindingURI:
 		return &uriFieldCache
-	case "query":
+	case bindingQuery:
 		return &queryFieldCache
 	}
 
@@ -234,18 +273,20 @@ func buildFieldInfo(t reflect.Type, aliasTag string) fieldInfo {
 
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if !isExported(f) {
+		if !isExported(&f) {
 			continue
 		}
-		info.names[fieldName(f, aliasTag)] = f.Type.Kind()
+		fieldType := unwrapType(f.Type)
+		info.names[fieldName(&f, aliasTag)] = fieldType.Kind()
 
-		if f.Type.Kind() == reflect.Struct {
-			for j := 0; j < f.Type.NumField(); j++ {
-				sf := f.Type.Field(j)
-				if !isExported(sf) {
+		if fieldType.Kind() == reflect.Struct {
+			for j := 0; j < fieldType.NumField(); j++ {
+				sf := fieldType.Field(j)
+				if !isExported(&sf) {
 					continue
 				}
-				info.nestedKinds[sf.Type.Kind()] = struct{}{}
+				nestedType := unwrapType(sf.Type)
+				info.nestedKinds[nestedType.Kind()] = struct{}{}
 			}
 		}
 	}
@@ -255,7 +296,7 @@ func buildFieldInfo(t reflect.Type, aliasTag string) fieldInfo {
 
 func equalFieldType(out any, kind reflect.Kind, key, aliasTag string) bool {
 	typ := reflect.TypeOf(out).Elem()
-	key = strings.ToLower(key)
+	key = utilsstrings.ToLower(key)
 
 	if isStringKeyMap(typ) {
 		return true
@@ -287,18 +328,16 @@ func equalFieldType(out any, kind reflect.Kind, key, aliasTag string) bool {
 	return false
 }
 
-// Get content type from content type header
+// FilterFlags returns the media type value by trimming any parameters from a Content-Type header.
 func FilterFlags(content string) string {
-	for i, char := range content {
-		if char == ' ' || char == ';' {
-			return content[:i]
-		}
+	if i := strings.IndexAny(content, " ;"); i >= 0 {
+		return content[:i]
 	}
 	return content
 }
 
 func formatBindData[T, K any](aliasTag string, out any, data map[string][]T, key string, value K, enableSplitting, supportBracketNotation bool) error { //nolint:revive // it's okay
-	if supportBracketNotation && strings.Contains(key, "[") {
+	if supportBracketNotation && strings.IndexByte(key, '[') >= 0 {
 		parsed, err := parseParamSquareBrackets(key)
 		if err != nil {
 			return err
@@ -339,9 +378,10 @@ func formatBindData[T, K any](aliasTag string, out any, data map[string][]T, key
 }
 
 func assignBindData(aliasTag string, out any, data map[string][]string, key, value string, enableSplitting bool) { //nolint:revive // it's okay
-	if enableSplitting && strings.Contains(value, ",") && equalFieldType(out, reflect.Slice, key, aliasTag) {
-		values := strings.Split(value, ",")
-		data[key] = append(data[key], values...)
+	if enableSplitting && strings.IndexByte(value, ',') >= 0 && equalFieldType(out, reflect.Slice, key, aliasTag) {
+		for v := range strings.SplitSeq(value, ",") {
+			data[key] = append(data[key], v)
+		}
 	} else {
 		data[key] = append(data[key], value)
 	}

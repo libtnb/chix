@@ -3,7 +3,7 @@ package binder
 type uriBinding struct{}
 
 func (*uriBinding) Name() string {
-	return "uri"
+	return bindingURI
 }
 
 func (b *uriBinding) Bind(params []string, paramsFunc func(key string) string, out any) error {
