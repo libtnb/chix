@@ -308,6 +308,8 @@ func (r *Render) EventStream(v any) {
 
 // SSEvent writes a Server-Sent Event to the response and setting the
 // Content-Type as text/event-stream if not set.
+// Encoding errors are ignored; use renderer.SSEventEncode directly if you
+// need to handle them.
 func (r *Render) SSEvent(event renderer.SSEvent) {
 	if r.r == nil {
 		http.Error(r.w, "chix: SSEvent requires passing *http.Request", http.StatusInternalServerError)

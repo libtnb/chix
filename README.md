@@ -185,6 +185,8 @@ router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 
 ##### Set Cookie
 
+Always set Path explicitly, so the cookie can be reliably removed later:
+
 ```go
 router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 	render := chix.NewRender(w)
@@ -192,12 +194,17 @@ router.Get("/", func(w http.ResponseWriter, r *http.Request) {
 	render.Cookie(&http.Cookie{
 		Name:  "token",
 		Value: "your-token",
+		Path:  "/",
 	})
 	// Your code...
 })
 ```
 
 ##### Remove Cookie
+
+Browsers only remove a cookie when the deletion Path matches the Path it was
+set with (cookies set without a Path get a default path derived from the
+request URL, see RFC 6265):
 
 ```go
 router.Get("/", func(w http.ResponseWriter, r *http.Request) {
