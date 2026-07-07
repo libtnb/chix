@@ -137,6 +137,41 @@ func TestBind_BodyReturnsErrorForUnsupportedContentType(t *testing.T) {
 	require.ErrorIs(t, err, chix.ErrUnsupportedMediaType)
 }
 
+func TestBind_BodyLimitExceeded(t *testing.T) {
+	body := `{"key":"` + strings.Repeat("x", 1024) + `"}`
+	req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	b := chix.NewBind(req)
+	out := make(map[string]string)
+	err := b.Body(&out, 16)
+	var maxErr *http.MaxBytesError
+	require.ErrorAs(t, err, &maxErr)
+	require.EqualValues(t, 16, maxErr.Limit)
+}
+
+func TestBind_BodyWithinLimit(t *testing.T) {
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"key":"value"}`))
+	req.Header.Set("Content-Type", "application/json")
+	b := chix.NewBind(req)
+	out := make(map[string]string)
+	err := b.Body(&out, 1024)
+	require.NoError(t, err)
+	require.Equal(t, "value", out["key"])
+}
+
+func TestBind_XMLLimitExceeded(t *testing.T) {
+	type XMLData struct {
+		Key string `xml:"key"`
+	}
+
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`<XMLData><key>`+strings.Repeat("x", 1024)+`</key></XMLData>`))
+	b := chix.NewBind(req)
+	out := XMLData{}
+	err := b.XML(&out, 16)
+	var maxErr *http.MaxBytesError
+	require.ErrorAs(t, err, &maxErr)
+}
+
 func TestBind_URIWithoutRouteContext(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test/value", nil)
 	b := chix.NewBind(req)

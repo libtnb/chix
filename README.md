@@ -14,6 +14,8 @@ go get github.com/libtnb/chix/v2
 
 - `chix.JSONEncoder`/`JSONDecoder`/`XMLEncoder`/`XMLDecoder` are replaced by `chix.JSONMarshal`/`JSONUnmarshal`/`XMLMarshal`/`XMLUnmarshal`, which accept any implementation matching the standard `Marshal`/`Unmarshal` signatures (e.g. sonic, go-json).
 - Query/form/header binding no longer joins repeated keys with commas: `?a=1&a=2` now binds to `["1", "2"]` instead of `["1,2"]`, and values containing commas are no longer split unless splitting is enabled.
+- Repeated keys bound to a scalar (non-slice) field resolve to the **last** value, matching gofiber/schema and Fiber: `?role=user&role=admin` binds `role` as `"admin"`. If duplicate parameters are security-sensitive for you, validate or reject them before binding.
+- `Bind.JSON`/`Bind.XML`/`Bind.Body` read at most 32MB of the request body by default; pass a custom size to override. A larger body fails with an `*http.MaxBytesError`, which you can map to HTTP 413.
 - `Render.JSON`/`JSONP` no longer write a trailing newline.
 - `Render.Hijack` now returns `(net.Conn, *bufio.ReadWriter, error)` directly.
 - `Render.WithoutCookie` deletes the cookie with `Path=/` by default and accepts an optional path.

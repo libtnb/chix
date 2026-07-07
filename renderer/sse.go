@@ -11,6 +11,9 @@ import (
 
 type SSEvent struct {
 	Event string
+	// Data is the event payload, may be nil. It is read fully into memory
+	// while encoding to keep the emitted frame atomic, so it should be a
+	// bounded-size message body rather than a large or unbounded stream.
 	Data  io.Reader
 	ID    string
 	Retry uint

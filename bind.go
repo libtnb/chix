@@ -21,6 +21,11 @@ var (
 	ErrNoRouteContext = errors.New("chix: no chi route context in request")
 )
 
+// defaultBodyLimit is the default maximum memory in bytes used to read and
+// parse a request body. net/http, unlike fasthttp, enforces no body size
+// limit on its own.
+const defaultBodyLimit = 32 << 20 // 32MB
+
 var bindPool = sync.Pool{
 	New: func() any {
 		return new(Bind)
@@ -60,21 +65,41 @@ func (b *Bind) Query(out any) error {
 	return binder.QueryBinder.Bind(b.r, out, b.enableSplitting)
 }
 
-// JSON binds the body string into the struct using JSONUnmarshal.
-func (b *Bind) JSON(out any) error {
-	body, err := io.ReadAll(b.r.Body)
+// readBody reads the request body up to the given size limit, default is 32MB.
+// A larger body fails with an *http.MaxBytesError.
+func (b *Bind) readBody(size ...int64) ([]byte, error) {
+	limit := int64(defaultBodyLimit)
+	if len(size) > 0 {
+		limit = size[0]
+	}
+
+	body, err := io.ReadAll(http.MaxBytesReader(nil, b.r.Body, limit))
 	if err != nil {
-		return fmt.Errorf("bind: %w", err)
+		return nil, fmt.Errorf("bind: %w", err)
+	}
+
+	return body, nil
+}
+
+// JSON binds the body string into the struct using JSONUnmarshal.
+// Parameter size is the maximum body size in bytes to read, default is 32MB;
+// a larger body fails with an *http.MaxBytesError.
+func (b *Bind) JSON(out any, size ...int64) error {
+	body, err := b.readBody(size...)
+	if err != nil {
+		return err
 	}
 
 	return binder.JSONBinder.Bind(body, JSONUnmarshal, out)
 }
 
 // XML binds the body string into the struct using XMLUnmarshal.
-func (b *Bind) XML(out any) error {
-	body, err := io.ReadAll(b.r.Body)
+// Parameter size is the maximum body size in bytes to read, default is 32MB;
+// a larger body fails with an *http.MaxBytesError.
+func (b *Bind) XML(out any, size ...int64) error {
+	body, err := b.readBody(size...)
 	if err != nil {
-		return fmt.Errorf("bind: %w", err)
+		return err
 	}
 
 	return binder.XMLBinder.Bind(body, XMLUnmarshal, out)
@@ -100,7 +125,7 @@ func (b *Bind) URI(out any) error {
 // Parameter size is the maximum memory in bytes used to parse the form, default is 32MB.
 func (b *Bind) MultipartForm(out any, size ...int64) error {
 	if len(size) == 0 {
-		size = append(size, 32<<20) // 32MB
+		size = append(size, defaultBodyLimit)
 	}
 
 	return binder.FormBinder.BindMultipart(b.r, out, size[0], b.enableSplitting)
@@ -109,8 +134,8 @@ func (b *Bind) MultipartForm(out any, size ...int64) error {
 // Body binds the request body into the struct, map[string]string and map[string][]string.
 // It supports decoding the following content types based on the Content-Type header:
 // application/json, application/xml, application/x-www-form-urlencoded, multipart/form-data.
-// The optional size parameter is the maximum memory in bytes used to parse a multipart
-// form, default is 32MB.
+// The optional size parameter is the maximum memory in bytes used to read and parse
+// the body, default is 32MB; a larger JSON/XML body fails with an *http.MaxBytesError.
 // If no supported mime type of body is matched, it returns ErrUnsupportedMediaType.
 func (b *Bind) Body(out any, size ...int64) error {
 	// Get content-type
@@ -120,9 +145,9 @@ func (b *Bind) Body(out any, size ...int64) error {
 	// Parse body accordingly
 	switch ctype {
 	case MIMEApplicationJSON:
-		return b.JSON(out)
+		return b.JSON(out, size...)
 	case MIMETextXML, MIMEApplicationXML:
-		return b.XML(out)
+		return b.XML(out, size...)
 	case MIMEApplicationForm:
 		return b.Form(out)
 	case MIMEMultipartForm:
