@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/go-chi/chi/v5 v5.5.0
-	github.com/gofiber/schema v1.9.5
+	github.com/gofiber/schema v1.10.0
 	github.com/gofiber/utils/v2 v2.6.5
 	github.com/stretchr/testify v1.12.1
 )
